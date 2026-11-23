@@ -1,0 +1,13 @@
+{
+  "id": "kagglekimg99k/wan22-batch-infer",
+  "title": "Wan22 Batch Infer",
+  "code_file": "launcher.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["u8888u/wan22-i2v-a14b"],
+  "competition_sources": [],
+  "kernel_sources": []
+}

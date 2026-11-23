@@ -1,0 +1,85 @@
+name: Kaggle Batch Inference Push
+
+'on':
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'main'
+        type: string
+      batch_id:
+        description: 'Batch identifier'
+        required: true
+        type: string
+      shard_index:
+        description: 'Shard index (0-based)'
+        required: true
+        type: number
+      num_shards:
+        description: 'Total number of shards'
+        required: true
+        type: number
+      infer_args:
+        description: 'Additional arguments for infer.py'
+        required: false
+        default: ''
+        type: string
+
+env:
+  KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+  KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+
+jobs:
+  push-kernel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: 1
+
+      - name: Install kaggle CLI
+        run: |
+          pip install -q kaggle==2.2.5
+
+      - name: Prepare kernel directory
+        run: |
+          mkdir -p /tmp/kaggle_kernel
+          cp infra/launcher.py /tmp/kaggle_kernel/
+          cp infra/kernel-metadata.json /tmp/kaggle_kernel/
+          cp requirements-cloud.txt /tmp/kaggle_kernel/
+          cp -r src /tmp/kaggle_kernel/
+          cp -r workflows /tmp/kaggle_kernel/
+          python3 - <<'EOF'
+          import json, sys, os
+          branch = "${{ github.event.inputs.branch }}"
+          batch_id = "${{ github.event.inputs.batch_id }}"
+          shard_index = "${{ github.event.inputs.shard_index }}"
+          num_shards = "${{ github.event.inputs.num_shards }}"
+          infer_args = "${{ github.event.inputs.infer_args }}".strip()
+          
+          args = [infer_args] if infer_args else []
+          args.extend(["--batch-id", batch_id, "--shard-index", shard_index, "--num-shards", num_shards])
+          config = {
+              "repo": "https://github.com/${{ github.repository }}.git",
+              "branch": branch,
+              "args": args
+          }
+          with open("infra/launcher.py", "r") as f:
+              content = f.read()
+          content = content.replace("EMBEDDED_RUN_CONFIG = None", f"EMBEDDED_RUN_CONFIG = {json.dumps(config)}")
+          with open("/tmp/kaggle_kernel/launcher.py", "w") as f:
+              f.write(content)
+          EOF
+
+      - name: Push kernel to Kaggle
+        run: |
+          cd /tmp/kaggle_kernel
+          kaggle kernels push -p . --timeout 600
+
+      - name: Output kernel URL
+        run: |
+          echo "Kernel pushed. Check at https://www.kaggle.com/code/kagglekimg99k/wan22-batch-infer"

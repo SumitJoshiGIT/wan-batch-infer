@@ -1,0 +1,7 @@
+# Cloud requirements for wan-batch-infer
+# NO torch, torchvision, torchaudio, nvidia-* packages - those are installed by the host
+huggingface_hub>=0.25.0
+requests>=2.31.0
+pyyaml>=6.0
+pillow>=10.0.0
+tqdm>=4.66.0
