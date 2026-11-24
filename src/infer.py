@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+# plain LFS uploads: on Kaggle the Xet path left the LFS pointer without its file (hub rejected the commit)
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 from pathlib import Path
 import re
 import shutil
