@@ -86,9 +86,54 @@ def pip_install(env: dict, constraints: Path) -> None:
     subprocess.run(cmd + ["-c", str(constraints)] + pkgs, check=True)
 
 
+OUT_REF = re.compile(r"\$\{out:(\d+)\}")
+
+
+def _out_ref_steps(value) -> set:
+    """Indices K of every ${out:K} reference in a (possibly nested) step params value."""
+    if isinstance(value, str):
+        return {int(k) for k in OUT_REF.findall(value)}
+    if isinstance(value, list):
+        return set().union(*(_out_ref_steps(v) for v in value), set())
+    if isinstance(value, dict):
+        return set().union(*(_out_ref_steps(v) for v in value.values()), set())
+    return set()
+
+
+def failed_deps(step_params, results: list) -> list:
+    """Sorted indices of the steps that step_params reference and that failed or were skipped.
+
+    results[k] must be the record of step k (done["steps"] keeps one record per step, in order).
+    """
+    failed = []
+    for k in sorted(_out_ref_steps(step_params)):
+        if k >= len(results):
+            raise ValueError(f"step refers to ${{out:{k}}} but step {k} has not run yet")
+        r = results[k]
+        if r.get("skipped") or r["rc"] != 0:
+            failed.append(k)
+    return failed
+
+
+def dep_failed(step_params, results: list) -> bool:
+    return bool(failed_deps(step_params, results))
+
+
+def skipped_record(i: int, step: dict, dep: int) -> dict:
+    return {"i": i, "tool": step["tool"], "rc": None, "skipped": True, "reason": f"dependency step {dep} failed"}
+
+
 def resolve(value, root: Path, outs: list):
     if isinstance(value, str):
-        value = re.sub(r"\$\{out:(\d+)\}", lambda m: str(outs[int(m.group(1))]), value)
+        def sub(m):
+            k = int(m.group(1))
+            if outs[k] is None:
+                raise ValueError(f"${{out:{k}}} points at a skipped step")
+            return str(outs[k])
+        value = OUT_REF.sub(sub, value)
+        # Tools run with cwd <root>/tools, so a relative path to an existing file or dir under root must be made absolute.
+        if value and not os.path.isabs(value) and (root / value).exists():
+            return str((root / value).resolve())
         return value
     if isinstance(value, list):
         return [resolve(v, root, outs) for v in value]
@@ -173,6 +218,12 @@ def main(argv=None) -> int:
         beat(hub, a.hub_dataset, base, "models ready", sec=done["setup"]["ready_sec"])
         outs: list = []
         for i, step in enumerate(env["steps"]):
+            deps = failed_deps(step["params"], done["steps"])
+            if deps:  # never run a step on a failed or skipped input; keep going with independent steps
+                done["steps"].append(skipped_record(i, step, deps[0]))
+                outs.append(None)  # keeps outs indexed by step
+                print(f"step {i} {step['tool']} skipped: dependency step {deps[0]} failed", flush=True)
+                continue
             beat(hub, a.hub_dataset, base, f"step {i} running", tool=step["tool"])
             res = run_step(i, step, root, outs)
             res["files"] = upload_dir(hub, a.hub_dataset, Path(res["out_dir"]), f"{base}/step{i}", f"tool_run {a.run_id} step{i}")
@@ -180,6 +231,7 @@ def main(argv=None) -> int:
             done["steps"].append(res)
             if res["rc"] != 0 and not a.keep_going:
                 break
+        # a skipped step has rc None, so it also makes ok False
         done["ok"] = len(done["steps"]) == len(env["steps"]) and all(s["rc"] == 0 for s in done["steps"])
     except BaseException as e:  # record the cause on the hub, then fail
         done["error"] = f"{type(e).__name__}: {str(e)[:500]}"
