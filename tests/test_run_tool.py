@@ -169,6 +169,18 @@ def test_main_skips_dependents_of_failed_step_and_runs_independent_ones(tmp_path
 
 
 
+def test_fetch_models_refreshes_existing_snapshot_dir(tmp_path, monkeypatch):
+    calls = []
+    hf = types.ModuleType("huggingface_hub")
+    hf.hf_hub_download = lambda *a, **k: None
+    hf.snapshot_download = lambda repo, **k: calls.append((repo, k["allow_patterns"]))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hf)
+    (tmp_path / "components/videos/models/clip/c").mkdir(parents=True)  # left by an earlier run
+    env = {"snapshots": [{"repo": "o/c", "dest": "clip/c", "allow_patterns": ["*.bin"]}]}
+    run_tool.fetch_models(tmp_path, env, None)
+    assert calls == [("o/c", ["*.bin"])]
+
+
 def test_link_models_root_points_at_store(tmp_path):
     link = run_tool.link_models_root(tmp_path)
     (tmp_path / "components/videos/models/diffusion_models").mkdir(parents=True)

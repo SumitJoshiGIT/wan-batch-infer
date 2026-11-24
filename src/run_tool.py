@@ -85,9 +85,10 @@ def fetch_models(root: Path, env: dict, token) -> list:
         print(f"model {m['name']}: {dest.stat().st_size} bytes", flush=True)
     for c in env.get("snapshots", []):  # e.g. the CLIP used by qc.identity
         d = models / c["dest"]
-        if not d.exists():
-            snapshot_download(c["repo"], local_dir=str(d), token=token,
-                              allow_patterns=c.get("allow_patterns"))
+        # always call it: a dir left by an earlier run (session cache) may lack files the patterns now want;
+        # snapshot_download only fetches what is missing
+        snapshot_download(c["repo"], local_dir=str(d), token=token,
+                          allow_patterns=c.get("allow_patterns"))
     shutil.rmtree(root / "_dl", ignore_errors=True)
     link_models_root(root)
     return got
