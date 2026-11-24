@@ -158,17 +158,23 @@ def clone_pinned_repo(repo_url: str, commit: str, dest_dir: Path) -> None:
     subprocess.run(["git", "-C", str(dest_dir), "checkout", "-q", commit], check=True)
 
 
-def setup_comfyui(comfy_dir: Path, mount_dir: Path) -> None:
-    """Full setup sequence for ComfyUI on remote host."""
+def setup_comfyui(comfy_dir: Path, mount_dir: Optional[Path] = None,
+                  comfy_commit: Optional[str] = None, gguf_commit: Optional[str] = None) -> None:
+    """Full setup sequence for ComfyUI on remote host.
+
+    mount_dir=None skips extra_model_paths.yaml (the caller supplies its own model paths);
+    the commit arguments override the pins (used to reproduce a local ComfyUI exactly).
+    """
     comfy_dir = Path(comfy_dir)
-    mount_dir = Path(mount_dir)
+    comfy_commit = comfy_commit or COMFYUI_COMMIT
+    gguf_commit = gguf_commit or COMFYUI_GGUF_COMMIT
     
     # 1. Clone ComfyUI at pinned commit
-    clone_pinned_repo(COMFYUI_REPO_URL, COMFYUI_COMMIT, comfy_dir)
+    clone_pinned_repo(COMFYUI_REPO_URL, comfy_commit, comfy_dir)
     
     # 2. Clone ComfyUI-GGUF at pinned commit
     gguf_dir = comfy_dir / "custom_nodes" / "ComfyUI-GGUF"
-    clone_pinned_repo(COMFYUI_GGUF_REPO_URL, COMFYUI_GGUF_COMMIT, gguf_dir)
+    clone_pinned_repo(COMFYUI_GGUF_REPO_URL, gguf_commit, gguf_dir)
     
     # 3. Create host constraints
     constraints_content = build_constraints()
@@ -203,4 +209,5 @@ def setup_comfyui(comfy_dir: Path, mount_dir: Path) -> None:
         temp_req.unlink(missing_ok=True)
     
     # 5. Write extra_model_paths.yaml pointing at mount
-    write_extra_model_paths(comfy_dir, mount_dir)
+    if mount_dir is not None:
+        write_extra_model_paths(comfy_dir, Path(mount_dir))
