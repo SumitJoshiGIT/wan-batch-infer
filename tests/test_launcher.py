@@ -187,3 +187,36 @@ def test_clone_repo_forced_failure_sanitizes_stderr(capsys, monkeypatch):
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def _load_launcher():
+    spec = importlib.util.spec_from_file_location(
+        "launcher_under_test", Path(__file__).parent.parent / "infra" / "launcher.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_clone_command_has_single_git_and_auth_before_clone(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    seen = []
+
+    def fake_run(cmd, **kw):
+        seen.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    mod.clone_repo("https://example.com/r.git", "master", tmp_path / "r", "tok123")
+    cmd, kw = seen[0]
+    assert cmd.count("git") == 1 and cmd[0] == "git"
+    assert cmd.index("-c") < cmd.index("clone")
+    assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_clone_without_token_has_no_auth_header(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    seen = []
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda cmd, **kw: seen.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    mod.clone_repo("https://example.com/r.git", "master", tmp_path / "r", None)
+    assert seen[0][:2] == ["git", "clone"]

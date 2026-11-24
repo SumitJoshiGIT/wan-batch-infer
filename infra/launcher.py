@@ -96,24 +96,31 @@ def sanitize_error(msg: str, secret_token: Optional[str] = None) -> str:
     msg = re.sub(r'(gh[pousr]|github_pat)_[A-Za-z0-9_]+', '***', msg)
     # Remove HF token patterns
     msg = re.sub(r'hf_[A-Za-z0-9_]+', 'hf_***', msg)
-    # Remove bare tokens that look like base64
-    msg = re.sub(r'[A-Za-z0-9+/]{16,}={0,2}', '***', msg)
+    # Padded base64 blobs only: unpadded 16+ char strings are usually SHAs or paths
+    msg = re.sub(r'[A-Za-z0-9+/]{16,}={1,2}', '***', msg)
     return msg
 
 def clone_repo(repo_url: str, branch: str, target_dir: Path, github_token: Optional[str]) -> None:
     """Idempotent shallow clone with auth."""
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"  # fail fast instead of waiting for credentials
+    auth_args: List[str] = []
+    if github_token:
+        auth_header = base64.b64encode(f"x-access-token:{github_token}".encode()).decode()
+        auth_args = ["-c", f"http.extraHeader=Authorization: Basic {auth_header}"]
+
     if target_dir.exists():
         # Fetch + reset
         try:
             subprocess.run(
-                ["git", "-C", str(target_dir), "fetch", "--depth", "1", "origin", branch],
-                check=True, capture_output=True, text=True
+                ["git", *auth_args, "-C", str(target_dir), "fetch", "--depth", "1", "origin", branch],
+                check=True, capture_output=True, text=True, env=env
             )
             subprocess.run(
                 ["git", "-C", str(target_dir), "reset", "--hard", f"origin/{branch}"],
-                check=True, capture_output=True, text=True
+                check=True, capture_output=True, text=True, env=env
             )
             return
         except subprocess.CalledProcessError as e:
@@ -121,14 +128,7 @@ def clone_repo(repo_url: str, branch: str, target_dir: Path, github_token: Optio
             shutil.rmtree(target_dir, ignore_errors=True)
     
     # Fresh clone with auth header if token provided
-    env = os.environ.copy()
-    git_cmd = ["git", "clone", "--depth", "1", "--branch", branch]
-    
-    if github_token:
-        auth_header = base64.b64encode(f"x-access-token:{github_token}".encode()).decode()
-        git_cmd = ["git", "-c", f"http.extraHeader=Authorization: Basic {auth_header}"] + git_cmd
-    
-    git_cmd += [repo_url, str(target_dir)]
+    git_cmd = ["git", *auth_args, "clone", "--depth", "1", "--branch", branch, repo_url, str(target_dir)]
     
     try:
         subprocess.run(git_cmd, check=True, capture_output=True, text=True, env=env)
@@ -149,7 +149,7 @@ def install_requirements(req_path: Path) -> None:
         # Use uv, but exclude torch packages
         try:
             subprocess.run(
-                ["uv", "pip", "install", "-q", "--no-cache-dir", "-r", str(req_path)],
+                ["uv", "pip", "install", "--system", "-q", "--no-cache-dir", "-r", str(req_path)],
                 check=True
             )
         except subprocess.CalledProcessError as e:
@@ -232,6 +232,7 @@ def main():
     else:
         output_dir = repo_dir / "outputs"
     
+    orig_out, orig_err = sys.stdout, sys.stderr
     log_file, log_path = setup_logging(output_dir)
     
     try:
@@ -280,8 +281,16 @@ def main():
         print(f"Running: {' '.join(cmd)}")
         print(f"CWD: {repo_dir}")
         
-        result = subprocess.run(cmd, cwd=repo_dir, check=True)
-        print(f"Inference completed with exit code {result.returncode}")
+        # Stream through our tee so infer.py output lands in run.log too
+        proc = subprocess.Popen(cmd, cwd=repo_dir, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            sys.stdout.write(line)
+        rc = proc.wait()
+        if rc != 0:
+            raise subprocess.CalledProcessError(rc, cmd)
+        print(f"Inference completed with exit code {rc}")
         
     except SystemExit as e:
         print(f"SystemExit: {e}", file=sys.stderr)
@@ -290,6 +299,7 @@ def main():
         traceback.print_exc()
         raise
     finally:
+        sys.stdout, sys.stderr = orig_out, orig_err
         log_file.close()
 
 if __name__ == "__main__":
