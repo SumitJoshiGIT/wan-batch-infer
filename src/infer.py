@@ -121,8 +121,31 @@ def filter_items_for_shard(
     ]
 
 
-def get_system_memory() -> Tuple[float, float]:
-    """Return (peak_vram_mb, peak_ram_mb)."""
+def _group_rss_mb(pgid: int) -> float:
+    """Sum resident memory (MB) of every process in process group pgid (ComfyUI runs in its own group)."""
+    total_kb = 0
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/stat") as f:
+                    stat = f.read()
+                # fields after the parenthesised comm: state ppid pgrp ...
+                rest = stat[stat.rindex(")") + 2:].split()
+                if int(rest[2]) != pgid:
+                    continue
+                with open(f"/proc/{entry}/statm") as f:
+                    total_kb += int(f.read().split()[1]) * (os.sysconf("SC_PAGE_SIZE") // 1024)
+            except (OSError, ValueError, IndexError):
+                continue
+    except OSError:
+        pass
+    return total_kb / 1024.0
+
+
+def get_system_memory(server_pid: Optional[int] = None) -> Tuple[float, float]:
+    """Return (vram_mb of GPU 0, host RAM mb of the ComfyUI process group, else of this process)."""
     vram_mb = 0.0
     try:
         res = subprocess.run(
@@ -138,6 +161,8 @@ def get_system_memory() -> Tuple[float, float]:
         pass
 
     ram_mb = 0.0
+    if server_pid is not None:
+        return vram_mb, _group_rss_mb(server_pid)
     try:
         import resource
         # ru_maxrss is in KB on Linux
@@ -567,6 +592,9 @@ def run_inference(
             )
 
             item_start_time = time.time()
+            item_peak_vram = 0.0
+            item_peak_ram = 0.0
+            last_mem_sample = 0.0
             item_failed = False
             item_error = ""
             video_bytes = None
@@ -599,6 +627,13 @@ def run_inference(
                                 item_failed = True
                                 item_error = f"ComfyUI server died during execution (code {server_proc.returncode})"
                                 break
+
+                            # Sample GPU 0 memory and the ComfyUI group's host RSS about every 3 s
+                            if time.time() - last_mem_sample >= 3.0:
+                                last_mem_sample = time.time()
+                                s_vram, s_ram = get_system_memory(server_proc.pid if server_proc else None)
+                                item_peak_vram = max(item_peak_vram, s_vram)
+                                item_peak_ram = max(item_peak_ram, s_ram)
 
                             # 2. Watch /history/{prompt_id}
                             try:
@@ -706,7 +741,9 @@ def run_inference(
                     item_error = f"Exception submitting/polling item: {e}"
 
             # Memory reading
-            cur_vram, cur_ram = get_system_memory()
+            s_vram, s_ram = get_system_memory(server_proc.pid if server_proc else None)
+            cur_vram = max(item_peak_vram, s_vram)
+            cur_ram = max(item_peak_ram, s_ram)
             peak_vram_recorded = max(peak_vram_recorded, cur_vram)
             peak_ram_recorded = max(peak_ram_recorded, cur_ram)
             duration_sec = time.time() - item_start_time
@@ -879,7 +916,7 @@ def main():
         help="Run identifier",
     )
     parser.add_argument("--max-runtime-min", type=float, default=600.0, help="Max total runtime in minutes")
-    parser.add_argument("--item-timeout-min", type=float, default=15.0, help="Max per-item runtime in minutes")
+    parser.add_argument("--item-timeout-min", type=float, default=45.0, help="Max per-item runtime in minutes")
     parser.add_argument("--hub-dataset", required=True, help="Destination HF dataset repository")
     parser.add_argument("--input-dataset", required=True, help="Source HF dataset repository with batch inputs")
     parser.add_argument("--width", type=int, default=960, help="Clip width")
