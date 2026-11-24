@@ -133,6 +133,16 @@ def upload_dir(hub, dataset: str, local: Path, remote: str, msg: str) -> list:
     return files
 
 
+def beat(hub, dataset: str, base: str, stage: str, **extra) -> None:
+    """Small progress file on the hub so a run is visible even when the platform shows no logs."""
+    from hub import CommitOperation
+    body = json.dumps({"stage": stage, "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **extra}).encode()
+    try:
+        hub.create_commit(dataset, [CommitOperation(path_in_repo=f"{base}/PROGRESS.json", content_bytes=body)], f"progress {stage}")
+    except Exception as e:  # visibility only; never fail the run for it
+        print(f"progress beat failed: {type(e).__name__}", flush=True)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bundle", required=True, help="path of the bundle in the job dataset")
@@ -150,16 +160,20 @@ def main(argv=None) -> int:
     done = {"run_id": a.run_id, "ok": False, "steps": [], "setup": {}}
     t0 = time.time()
     try:
+        beat(hub, a.hub_dataset, base, "started")
         bundle = hf_hub_download(a.job_dataset, a.bundle, repo_type="dataset", token=token, force_download=True)
         env = extract(Path(bundle), root)
         import comfy_setup
         setup_comfy(root, env)
         done["setup"]["comfy_sec"] = round(time.time() - t0, 1)
+        beat(hub, a.hub_dataset, base, "comfy ready", sec=done["setup"]["comfy_sec"])
         pip_install(env, root / "components/videos/comfyui/constraints.txt")
         done["setup"]["models"] = fetch_models(root, env, token)
         done["setup"]["ready_sec"] = round(time.time() - t0, 1)
+        beat(hub, a.hub_dataset, base, "models ready", sec=done["setup"]["ready_sec"])
         outs: list = []
         for i, step in enumerate(env["steps"]):
+            beat(hub, a.hub_dataset, base, f"step {i} running", tool=step["tool"])
             res = run_step(i, step, root, outs)
             res["files"] = upload_dir(hub, a.hub_dataset, Path(res["out_dir"]), f"{base}/step{i}", f"tool_run {a.run_id} step{i}")
             res.pop("out_dir")
