@@ -707,6 +707,10 @@ def run_inference(
 
 
 def main():
+    if "--probe" in sys.argv:
+        import probe
+        probe.main()
+        return
     parser = argparse.ArgumentParser(description="Wan 2.2 I2V batch inference runner")
     parser.add_argument("--batch-id", required=True, help="Batch ID")
     parser.add_argument("--shard-index", type=int, default=0, help="Shard index (0-based)")
