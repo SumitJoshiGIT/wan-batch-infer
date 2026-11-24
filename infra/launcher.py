@@ -59,10 +59,10 @@ def load_secrets() -> Dict[str, str]:
                 if name not in secrets:
                     try:
                         secrets[name] = client.get_secret(name)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as e:
+                        print(f"secret {name}: {type(e).__name__}: {str(e)[:120]}")
+        except Exception as e:
+            print(f"kaggle_secrets unavailable: {type(e).__name__}: {str(e)[:120]}")
     
     # 3. .env file (gitignored)
     env_path = Path(".env")
