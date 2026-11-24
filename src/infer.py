@@ -366,6 +366,8 @@ def run_inference(
     workflow_path = Path(__file__).parent.parent / "workflows" / "i2v_wan14_flf2v.json"
     if workflow_path.exists():
         workflow_template = json.loads(workflow_path.read_text(encoding="utf-8"))
+        # ComfyUI treats every top-level key as a node; drop non-node metadata such as "_meta"
+        workflow_template = {k: v for k, v in workflow_template.items() if isinstance(v, dict) and "class_type" in v}
     else:
         workflow_template = {}
 
