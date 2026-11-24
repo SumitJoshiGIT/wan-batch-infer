@@ -193,7 +193,7 @@ def setup_comfyui(comfy_dir: Path, mount_dir: Path) -> None:
         temp_req.write_text("".join(filtered_lines), encoding="utf-8")
         
         install_cmd = [
-            "uv", "pip", "install", "-q", "--no-cache-dir",
+            "uv", "pip", "install", "-q", "--no-cache-dir", "--system",
             "-c", str(constraints_path),
             "-r", str(temp_req),
         ] if has_uv else [

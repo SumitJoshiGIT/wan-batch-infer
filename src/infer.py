@@ -18,6 +18,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -205,52 +206,81 @@ def build_workflow_prompt(
     width: int,
     height: int,
     length: int,
-    local_keyframe_dir: Path,
+    local_keyframe_dir: Optional[Path],
+    comfy_input_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Substitute template variables into ComfyUI workflow JSON."""
     raw_str = json.dumps(template)
 
     start_img = item.get("image", "")
     end_img = item.get("end_image", "")
-    # If image path is local or relative, pass local path or filename
-    start_path = str(local_keyframe_dir / start_img) if not Path(start_img).is_absolute() else start_img
-    end_path = str(local_keyframe_dir / end_img) if not Path(end_img).is_absolute() else end_img
+    
+    # If using ComfyUI input directory, copy keyframes there and use filename
+    if comfy_input_dir is not None and local_keyframe_dir is not None:
+        import shutil
+        comfy_input_dir.mkdir(parents=True, exist_ok=True)
+        start_basename = Path(start_img).name if start_img else ""
+        end_basename = Path(end_img).name if end_img else ""
+        start_unique = f"{item.get('id', 'item')}__{start_basename}" if start_basename else ""
+        end_unique = f"{item.get('id', 'item')}__{end_basename}" if end_basename else ""
+        
+        if start_basename and (local_keyframe_dir / start_img).exists():
+            shutil.copy2(local_keyframe_dir / start_img, comfy_input_dir / start_unique)
+        if end_basename and (local_keyframe_dir / end_img).exists():
+            shutil.copy2(local_keyframe_dir / end_img, comfy_input_dir / end_unique)
+        
+        start_path = start_unique
+        end_path = end_unique
+    else:
+        # External ComfyUI (tests): use absolute paths or just the filename
+        if local_keyframe_dir is not None:
+            start_path = str(local_keyframe_dir / start_img) if not Path(start_img).is_absolute() else start_img
+            end_path = str(local_keyframe_dir / end_img) if not Path(end_img).is_absolute() else end_img
+        else:
+            # Test mode without local_keyframe_dir: just use the image filename
+            start_path = start_img
+            end_path = end_img
 
+    # Build replacements dict - numeric values stay as Python int/float
+    # Keys are the raw placeholder names without {{ }}
     replacements = {
-        "{{prompt}}": str(item.get("prompt", "")),
-        "{{negative}}": str(item.get("negative", "low quality, bad anatomy, deformed")),
-        "{{image}}": start_path,
-        "{{end_image}}": end_path,
-        "{{width}}": str(width),
-        "{{height}}": str(height),
-        "{{length}}": str(length),
-        "{{seed}}": str(item.get("seed", 42)),
-        "{{steps}}": str(item.get("steps", 4)),
-        "{{cfg}}": str(item.get("cfg", 1.0)),
-        "{{shift}}": str(item.get("shift", 5.0)),
-        "{{split}}": str(item.get("split", 2)),
-        "{{sampler}}": str(item.get("sampler", "euler")),
-        "{{scheduler}}": str(item.get("scheduler", "simple")),
-        "{{prefix}}": f"wan14_{item.get('id', 'out')}",
-        "{{unet_high}}": "Wan2.2-I2V-A14B-HighNoise-Q3_K_M.gguf",
-        "{{unet_low}}": "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
-        "{{clip}}": "umt5-xxl-encoder-Q3_K_M.gguf",
-        "{{clip_type}}": "wan",
-        "{{vae}}": "wan_2.1_vae.safetensors",
-        "{{lora_high}}": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
-        "{{lora_low}}": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
-        "{{lora_strength}}": "1.0",
+        "prompt": str(item.get("prompt", "")),
+        "negative": str(item.get("negative", "low quality, bad anatomy, deformed")),
+        "image": start_path,
+        "end_image": end_path,
+        "width": width,
+        "height": height,
+        "length": length,
+        "seed": item.get("seed", 42),
+        "steps": item.get("steps", 4),
+        "cfg": item.get("cfg", 1.0),
+        "shift": item.get("shift", 5.0),
+        "split": item.get("split", 2),
+        "sampler": str(item.get("sampler", "euler")),
+        "scheduler": str(item.get("scheduler", "simple")),
+        "prefix": f"wan14_{item.get('id', 'out')}",
+        "unet_high": "Wan2.2-I2V-A14B-HighNoise-Q3_K_M.gguf",
+        "unet_low": "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
+        "clip": "umt5-xxl-encoder-Q3_K_M.gguf",
+        "clip_type": "wan",
+        "vae": "wan_2.1_vae.safetensors",
+        "lora_high": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "lora_low": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "lora_strength": 1.0,
     }
 
+    # Numeric fields that should be JSON numbers (not quoted strings in the template)
+    numeric_fields = {"width", "height", "length", "seed", "steps", "split", "cfg", "shift", "lora_strength"}
+    
     for key, val in replacements.items():
-        # Handle JSON quoted numbers or raw strings
-        if key in ('"{{width}}"', '"{{height}}"', '"{{length}}"', '"{{seed}}"', '"{{steps}}"', '"{{split}}"'):
-            raw_str = raw_str.replace(key, val)
-        elif key in ('"{{cfg}}"', '"{{shift}}"', '"{{lora_strength}}"'):
-            raw_str = raw_str.replace(key, val)
+        placeholder = "{{" + key + "}}"  # e.g. {{width}}
+        if key in numeric_fields:
+            # Replace quoted placeholder with bare number (no quotes)
+            raw_str = raw_str.replace(f'"{placeholder}"', str(val))
         else:
-            raw_str = raw_str.replace(key, val.replace("\\", "\\\\").replace('"', '\\"'))
-
+            # String field: replace quoted placeholder with JSON-escaped string
+            raw_str = raw_str.replace(f'"{placeholder}"', json.dumps(str(val)))
+    
     return json.loads(raw_str)
 
 
@@ -274,6 +304,7 @@ def run_inference(
     skip_gpu_check: bool = False,
     item_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     on_item_start_hook: Optional[Callable[[Dict[str, Any], Optional[subprocess.Popen]], None]] = None,
+    mount: Optional[Path] = None,
 ) -> int:
     """Core batch inference runner."""
     global STOP_REQUESTED
@@ -288,6 +319,9 @@ def run_inference(
         work_dir = Path("/kaggle/temp/wan-batch-infer-work" if os.path.exists("/kaggle") else "./infer_work")
     work_dir = Path(work_dir).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    if mount is None:
+        mount = Path("/kaggle/input" if os.path.exists("/kaggle") else "./kaggle_input")
 
     state_prefix = f"state/shard_{shard_index}_{run_id}"
     batch_input_prefix = f"batches/{batch_id}"
@@ -328,26 +362,6 @@ def run_inference(
         if match:
             finished_item_ids.add(match.group(1))
 
-    # Heartbeat: record setup done
-    setup_heartbeat = {
-        "status": "ready",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "shard_index": shard_index,
-        "num_shards": num_shards,
-        "total_shard_items": len(shard_items),
-        "resumed_items": len(finished_item_ids),
-    }
-    hub.create_commit(
-        repo_id=hub_dataset,
-        operations=[
-            CommitOperation(
-                path_in_repo=f"{state_prefix}/progress.json",
-                content_bytes=json.dumps(setup_heartbeat, indent=2).encode(),
-            )
-        ],
-        commit_message=f"heartbeat: setup ready shard {shard_index}",
-    )
-
     # Load workflow template
     workflow_path = Path(__file__).parent.parent / "workflows" / "i2v_wan14_flf2v.json"
     if workflow_path.exists():
@@ -358,6 +372,7 @@ def run_inference(
     # ComfyUI server management
     server_proc: Optional[subprocess.Popen] = None
     actual_url = comfy_url
+    comfy_log_path = work_dir / "comfyui.log"
 
     def start_server() -> None:
         nonlocal server_proc, actual_url
@@ -365,32 +380,92 @@ def run_inference(
             actual_url = comfy_url
             return
 
+        # Real path: setup ComfyUI if not already set up (only when no comfy_cmd provided)
+        comfy_dir = work_dir / "ComfyUI"
+        if comfy_cmd is None and not (comfy_dir / "main.py").exists():
+            import comfy_setup
+            comfy_setup.setup_comfyui(comfy_dir, mount)
+
+        # Use main.py directly (ComfyUI auto-reads extra_model_paths.yaml from its root)
         cmd = comfy_cmd or [
             sys.executable,
-            "-m", "comfy",
+            "main.py",
             "--listen", "127.0.0.1",
             "--port", str(port),
             "--cache-none",
+            "--disable-auto-launch",
         ]
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = "0"
-        server_proc = subprocess.Popen(cmd, start_new_session=True, env=env)
+        
+        # Redirect stdout/stderr to log file only for real ComfyUI (not tests with comfy_cmd)
+        if comfy_cmd is None:
+            log_file = open(comfy_log_path, "a")
+            server_proc = subprocess.Popen(cmd, start_new_session=True, env=env, cwd=comfy_dir, stdout=log_file, stderr=subprocess.STDOUT)
+        else:
+            # Tests: no log redirection, no cwd (stub server handles its own cwd)
+            server_proc = subprocess.Popen(cmd, start_new_session=True, env=env)
         actual_url = f"http://127.0.0.1:{port}"
 
-        # Wait up to 60s for server to respond
-        wait_deadline = time.time() + 60.0
+        # Wait up to 300s for server to respond (cold start imports torch)
+        wait_deadline = time.time() + 300.0
         while time.time() < wait_deadline:
             if server_proc.poll() is not None:
-                raise RuntimeError("ComfyUI server terminated unexpectedly during startup")
+                if comfy_cmd is None:
+                    log_file.close()
+                # Print last 60 lines of log (only for real ComfyUI)
+                try:
+                    if comfy_log_path.exists():
+                        log_lines = comfy_log_path.read_text(encoding="utf-8").splitlines()
+                        tail = "\n".join(log_lines[-60:])
+                    else:
+                        tail = "No log file (test mode)"
+                except Exception:
+                    tail = "Could not read log file"
+                raise RuntimeError(f"ComfyUI server terminated unexpectedly during startup\nLast 60 lines of log:\n{tail}")
             try:
                 r = requests.get(f"{actual_url}/system_stats", timeout=1.0)
                 if r.status_code == 200:
+                    if comfy_cmd is None:
+                        log_file.close()
                     return
             except Exception:
                 pass
             time.sleep(0.5)
+        
+        if comfy_cmd is None:
+            log_file.close()
+        # Timeout - print last 60 lines
+        try:
+            if comfy_log_path.exists():
+                log_lines = comfy_log_path.read_text(encoding="utf-8").splitlines()
+                tail = "\n".join(log_lines[-60:])
+            else:
+                tail = "No log file (test mode)"
+        except Exception:
+            tail = "Could not read log file"
+        raise RuntimeError(f"ComfyUI server startup timed out after 300s\nLast 60 lines of log:\n{tail}")
 
     start_server()
+
+    # Heartbeat: setup done and server up (one commit per stage, never per item)
+    hub.create_commit(
+        repo_id=hub_dataset,
+        operations=[
+            CommitOperation(
+                path_in_repo=f"{state_prefix}/progress.json",
+                content_bytes=json.dumps({
+                    "status": "ready",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "shard_index": shard_index,
+                    "num_shards": num_shards,
+                    "total_shard_items": len(shard_items),
+                    "resumed_items": len(finished_item_ids),
+                }, indent=2).encode(),
+            )
+        ],
+        commit_message=f"heartbeat: setup ready shard {shard_index}",
+    )
 
     # Progress tracking
     failed_records: List[Dict[str, Any]] = []
@@ -472,6 +547,9 @@ def run_inference(
                             pass
 
             # Prepare Comfy prompt payload
+            comfy_input_dir = None
+            if server_proc is not None:  # Real path, not tests
+                comfy_input_dir = work_dir / "ComfyUI" / "input"
             workflow_prompt = build_workflow_prompt(
                 workflow_template,
                 item,
@@ -479,12 +557,14 @@ def run_inference(
                 height=height,
                 length=length,
                 local_keyframe_dir=local_input_dir,
+                comfy_input_dir=comfy_input_dir,
             )
 
             item_start_time = time.time()
             item_failed = False
             item_error = ""
             video_bytes = None
+            frames_count = 0
 
             # Check server alive before prompt
             if server_proc and server_proc.poll() is not None:
@@ -526,31 +606,86 @@ def run_inference(
                                             item_error = f"ComfyUI execution error: {status_info.get('messages')}"
                                             break
                                         elif status_info.get("completed", False):
-                                            # Find output video filename
+                                            # Find output frames from SaveImage node
                                             outputs = hist_data.get("outputs", {})
-                                            output_filename = None
-                                            subfolder = ""
-                                            file_type = "output"
+                                            frame_files = []  # list of (filename, subfolder, file_type)
                                             for node_id, node_out in outputs.items():
                                                 if "images" in node_out:
-                                                    output_filename = node_out["images"][0]["filename"]
-                                                    subfolder = node_out["images"][0].get("subfolder", "")
-                                                    file_type = node_out["images"][0].get("type", "output")
-                                                    break
+                                                    for img_info in node_out["images"]:
+                                                        frame_files.append((
+                                                            img_info["filename"],
+                                                            img_info.get("subfolder", ""),
+                                                            img_info.get("type", "output")
+                                                        ))
+                                                    break  # first SaveImage node
+                                            
+                                            if not frame_files:
+                                                item_failed = True
+                                                item_error = "No output frames found in ComfyUI history"
+                                                break
 
-                                            if output_filename:
-                                                view_resp = requests.get(
-                                                    f"{actual_url}/view",
-                                                    params={"filename": output_filename, "subfolder": subfolder, "type": file_type},
-                                                    timeout=30.0,
-                                                )
-                                                if view_resp.status_code == 200:
-                                                    video_bytes = view_resp.content
-                                                    break
-                                                else:
-                                                    item_failed = True
-                                                    item_error = f"Failed to download output clip: HTTP {view_resp.status_code}"
-                                                    break
+                                            # Download all frames
+                                            frame_paths = []
+                                            with tempfile.TemporaryDirectory() as tmpdir:
+                                                tmpdir_path = Path(tmpdir)
+                                                for idx, (filename, subfolder, file_type) in enumerate(frame_files):
+                                                    view_resp = requests.get(
+                                                        f"{actual_url}/view",
+                                                        params={"filename": filename, "subfolder": subfolder, "type": file_type},
+                                                        timeout=30.0,
+                                                    )
+                                                    if view_resp.status_code == 200:
+                                                        frame_path = tmpdir_path / f"frame_{idx:04d}.png"
+                                                        frame_path.write_bytes(view_resp.content)
+                                                        frame_paths.append(frame_path)
+                                                    else:
+                                                        item_failed = True
+                                                        item_error = f"Failed to download frame {filename}: HTTP {view_resp.status_code}"
+                                                        break
+                                                
+                                                if not item_failed:
+                                                    frames_count = len(frame_paths)
+                                                    # Validate frame count: should be 4n+1 where n>=1 (e.g., 5, 9, 13, 17, 21, 25)
+                                                    if frames_count < 5 or (frames_count - 1) % 4 != 0 or frames_count != length:
+                                                        item_failed = True
+                                                        item_error = f"Invalid frame count: {frames_count}. Expected {length} (4n+1)"
+                                                        break
+                                                    
+                                                    # Encode frames to mp4 using ffmpeg
+                                                    # Check ffmpeg is available (skip for stub tests)
+                                                    if server_proc is not None and shutil.which("ffmpeg") is None:
+                                                        item_failed = True
+                                                        item_error = "ffmpeg not found in PATH"
+                                                        break
+                                                    
+                                                    # Even dimensions required by libx264
+                                                    out_width = width if width % 2 == 0 else width - 1
+                                                    out_height = height if height % 2 == 0 else height - 1
+                                                    
+                                                    # Use the last frame path directory for output
+                                                    output_mp4 = tmpdir_path / "clip.mp4"
+                                                    ffmpeg_cmd = [
+                                                        "ffmpeg", "-y",
+                                                        "-framerate", "16",
+                                                        "-i", str(tmpdir_path / "frame_%04d.png"),
+                                                        "-c:v", "libx264",
+                                                        "-pix_fmt", "yuv420p",
+                                                        "-vf", f"scale={out_width}:{out_height}:force_original_aspect_ratio=decrease,pad={out_width}:{out_height}:(ow-iw)/2:(oh-ih)/2",
+                                                        str(output_mp4)
+                                                    ]
+                                                    try:
+                                                        subprocess.run(ffmpeg_cmd, check=True, capture_output=True, timeout=60.0)
+                                                        video_bytes = output_mp4.read_bytes()
+                                                        if not video_bytes:
+                                                            item_failed = True
+                                                            item_error = "ffmpeg produced empty output"
+                                                    except subprocess.CalledProcessError as e:
+                                                        item_failed = True
+                                                        item_error = f"ffmpeg encoding failed: {e.stderr.decode() if e.stderr else str(e)}"
+                                                    except subprocess.TimeoutExpired:
+                                                        item_failed = True
+                                                        item_error = "ffmpeg encoding timed out"
+                                            break
                             except Exception as req_err:
                                 pass
 
@@ -571,11 +706,21 @@ def run_inference(
             duration_sec = time.time() - item_start_time
 
             if item_failed:
+                # Get ComfyUI log tail on failure
+                comfy_log_tail = ""
+                if comfy_log_path.exists():
+                    try:
+                        log_lines = comfy_log_path.read_text(encoding="utf-8").splitlines()
+                        comfy_log_tail = "\n".join(log_lines[-60:])
+                    except Exception:
+                        pass
+                
                 err_record = {
                     "id": item_id,
                     "error": item_error,
                     "duration_sec": duration_sec,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "comfy_log_tail": comfy_log_tail,
                 }
                 failed_records.append(err_record)
 
@@ -630,10 +775,17 @@ def run_inference(
                 "width": width,
                 "height": height,
                 "length": length,
+                "frames": frames_count,
+                "fps": 16,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
-            local_clip.write_bytes(video_bytes or b"")
+            if not video_bytes:
+                item_failed = True
+                item_error = "No video bytes produced"
+                # fall through to failure handling
+            else:
+                local_clip.write_bytes(video_bytes)
             local_meta.write_text(json.dumps(meta_data, indent=2), encoding="utf-8")
             local_item.write_text(json.dumps(item, indent=2), encoding="utf-8")
 
@@ -728,8 +880,11 @@ def main():
     parser.add_argument("--height", type=int, default=544, help="Clip height")
     parser.add_argument("--length", type=int, default=25, help="Number of frames")
     parser.add_argument("--comfy-url", default=None, help="ComfyUI URL (if running externally or in tests)")
+    parser.add_argument("--mount", default=None, help="Path to model cache mount (default: /kaggle/input or ./kaggle_input)")
 
     args = parser.parse_args()
+
+    mount_path = Path(args.mount) if args.mount else None
 
     exit_code = run_inference(
         batch_id=args.batch_id,
@@ -744,6 +899,7 @@ def main():
         height=args.height,
         length=args.length,
         comfy_url=args.comfy_url,
+        mount=mount_path,
     )
     sys.exit(exit_code)
 

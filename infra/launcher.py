@@ -135,7 +135,8 @@ def clone_repo(repo_url: str, branch: str, target_dir: Path, github_token: Optio
     except subprocess.CalledProcessError as e:
         err = sanitize_error(e.stderr or e.stdout or str(e), github_token)
         print(f"Clone failed: {err}", file=sys.stderr)
-        sys.exit(1)
+        # from None: the chained CalledProcessError would print the auth header in notebooks
+        raise SystemExit(1) from None
 
 def install_requirements(req_path: Path) -> None:
     """Install requirements-cloud.txt with uv or pip, never reinstall torch."""

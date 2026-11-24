@@ -7,6 +7,7 @@ Accepts standard ComfyUI CLI flags: --listen, --port, --cache-none.
 
 import argparse
 import http.server
+import io
 import json
 import os
 import signal
@@ -14,6 +15,12 @@ import socketserver
 import sys
 import urllib.parse
 import uuid
+
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 # Pre-computed minimal valid MP4 bytes (1 frame, 64x64, h264)
 MINIMAL_VALID_MP4 = (
@@ -25,6 +32,22 @@ MINIMAL_VALID_MP4 = (
 
 def get_minimal_mp4() -> bytes:
     return MINIMAL_VALID_MP4
+
+
+def generate_png_frames(num_frames: int = 5, width: int = 960, height: int = 544) -> list:
+    """Generate multiple PNG frames for testing ffmpeg encoding."""
+    frames = []
+    if HAS_PIL:
+        for i in range(num_frames):
+            img = Image.new('RGB', (width, height), color=(i * 50 % 256, i * 30 % 256, i * 70 % 256))
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            frames.append(buf.getvalue())
+    else:
+        # Fallback: minimal PNG (1x1 pixel)
+        minimal_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xdd\x8d\xb4\x1c\x00\x00\x00\x00IEND\xaeB`\x82'
+        frames = [minimal_png] * num_frames
+    return frames
 
 
 class StubComfyHandler(http.server.BaseHTTPRequestHandler):
@@ -72,6 +95,18 @@ class StubComfyHandler(http.server.BaseHTTPRequestHandler):
                     }
                 }
             else:
+                # Return multiple frames as SaveImage output
+                num_frames = 5
+                for node in (self.prompts.get(prompt_id, {}).get("data", {}).get("prompt", {}) or {}).values():
+                    if isinstance(node, dict) and isinstance(node.get("inputs", {}).get("length"), int):
+                        num_frames = node["inputs"]["length"]
+                frame_entries = []
+                for i in range(num_frames):
+                    frame_entries.append({
+                        "filename": f"{prompt_id}_frame_{i:04d}.png",
+                        "subfolder": "",
+                        "type": "output",
+                    })
                 resp = {
                     prompt_id: {
                         "status": {
@@ -81,13 +116,7 @@ class StubComfyHandler(http.server.BaseHTTPRequestHandler):
                         },
                         "outputs": {
                             "17": {
-                                "images": [
-                                    {
-                                        "filename": f"{prompt_id}.mp4",
-                                        "subfolder": "",
-                                        "type": "output",
-                                    }
-                                ]
+                                "images": frame_entries
                             }
                         },
                     }
@@ -102,13 +131,35 @@ class StubComfyHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/view":
             filename = query.get("filename", ["output.mp4"])[0]
-            mp4_bytes = get_minimal_mp4()
-            self.send_response(200)
-            self.send_header("Content-Type", "video/mp4")
-            self.send_header("Content-Length", str(len(mp4_bytes)))
-            self.end_headers()
-            self.wfile.write(mp4_bytes)
-            return
+            # Check if it's a frame PNG
+            if filename.endswith(".png"):
+                # Generate PNG frames on demand
+                frames = generate_png_frames(5)
+                # Extract frame index from filename
+                frame_idx = 0
+                try:
+                    frame_idx = int(filename.split("_frame_")[-1].split(".")[0])
+                except:
+                    frame_idx = 0
+                if frame_idx < len(frames):
+                    png_bytes = frames[frame_idx]
+                else:
+                    png_bytes = frames[0]
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(png_bytes)))
+                self.end_headers()
+                self.wfile.write(png_bytes)
+                return
+            else:
+                # Return MP4 for backwards compatibility
+                mp4_bytes = get_minimal_mp4()
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(len(mp4_bytes)))
+                self.end_headers()
+                self.wfile.write(mp4_bytes)
+                return
 
         self.send_response(404)
         self.send_header("Content-Length", "0")
