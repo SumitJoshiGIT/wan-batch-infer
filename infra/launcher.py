@@ -193,6 +193,31 @@ def get_run_config() -> Dict[str, Any]:
     
     raise SystemExit("No run configuration found. Set EMBEDDED_RUN_CONFIG or provide run_config.json / -- args")
 
+def fetch_hub_job(pointer: Dict[str, Any], token: Optional[str]) -> Dict[str, Any]:
+    """Read the job spec (JSON) from a private HF dataset. The notebook stays fixed; jobs change.
+
+    pointer = {"dataset": "owner/name", "path": "jobs/next.json"}. Needs HF_TOKEN.
+    """
+    import urllib.request
+    import urllib.error
+    if not token:
+        raise SystemExit("job_from_hub needs HF_TOKEN (attach the secret to the notebook)")
+    ds, path = pointer["dataset"], pointer.get("path", "jobs/next.json")
+    url = f"https://huggingface.co/datasets/{ds}/resolve/main/{path}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            job = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"could not read job spec {ds}:{path}: HTTP {e.code}") from None
+    except Exception as e:
+        raise SystemExit(f"could not read job spec {ds}:{path}: {type(e).__name__}") from None
+    for key in ("repo", "args"):
+        if key not in job:
+            raise SystemExit(f"job spec {path} is missing '{key}'")
+    return job
+
+
 def setup_logging(output_dir: Path) -> tuple:
     """Set up tee logging to run.log."""
     log_path = output_dir / "run.log"
@@ -249,6 +274,9 @@ def main():
         
         # Get run config
         config = get_run_config()
+        if config.get("job_from_hub"):
+            config = fetch_hub_job(config["job_from_hub"], secrets.get("HF_TOKEN"))
+            print(f"Job from hub: {config.get('name', '?')}")
         repo_url = config.get("repo")
         branch = config.get("branch", "main")
         infer_args = config.get("args", [])
@@ -266,7 +294,7 @@ def main():
         print(f"Cloned to {repo_dir}")
         
         # Install requirements
-        req_path = repo_dir / "requirements-cloud.txt"
+        req_path = repo_dir / config.get("requirements", "requirements-cloud.txt")
         if req_path.exists():
             install_requirements(req_path)
             print("Requirements installed")
@@ -274,9 +302,9 @@ def main():
             print("No requirements-cloud.txt found, skipping")
         
         # Run infer.py
-        infer_script = repo_dir / "src" / "infer.py"
+        infer_script = repo_dir / config.get("entry", "src/infer.py")
         if not infer_script.exists():
-            raise SystemExit(f"infer.py not found at {infer_script}")
+            raise SystemExit(f"entry script not found at {infer_script}")
         
         cmd = [sys.executable, str(infer_script)] + infer_args
         print(f"Running: {' '.join(cmd)}")

@@ -17,7 +17,7 @@ def test_launcher_imports_stdlib_only():
     
     stdlib_modules = {
         'os', 'sys', 'subprocess', 'json', 'base64', 'traceback',
-        'shutil', 'pathlib', 'typing', 're', 'tempfile', 'importlib'
+        'shutil', 'pathlib', 'typing', 're', 'tempfile', 'importlib', 'urllib'
     }
     
     imports = set()
@@ -220,3 +220,33 @@ def test_clone_without_token_has_no_auth_header(tmp_path, monkeypatch):
                         lambda cmd, **kw: seen.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
     mod.clone_repo("https://example.com/r.git", "master", tmp_path / "r", None)
     assert seen[0][:2] == ["git", "clone"]
+
+
+def test_fetch_hub_job_reads_spec_and_validates(monkeypatch):
+    import io, json, urllib.request
+    spec = importlib.util.spec_from_file_location("launcher", Path(__file__).parent.parent / "infra" / "launcher.py")
+    launcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(launcher)
+    seen = {}
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=0):
+        seen["url"] = req.full_url
+        seen["auth"] = req.get_header("Authorization")
+        return R(json.dumps({"name": "j", "repo": "r", "args": ["--x"]}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    job = launcher.fetch_hub_job({"dataset": "o/d", "path": "jobs/next.json"}, "tok")
+    assert job["args"] == ["--x"]
+    assert seen["url"] == "https://huggingface.co/datasets/o/d/resolve/main/jobs/next.json"
+    assert seen["auth"] == "Bearer tok"
+
+    import pytest
+    with pytest.raises(SystemExit):
+        launcher.fetch_hub_job({"dataset": "o/d"}, None)
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: R(b'{"name": "j"}'))
+    with pytest.raises(SystemExit):
+        launcher.fetch_hub_job({"dataset": "o/d"}, "tok")
