@@ -48,8 +48,6 @@ def mount(mount_dir):
     root = Path(tempfile.mkdtemp(prefix="probe_comfy_"))
     yaml_path = comfy_setup.write_extra_model_paths(root, Path(mount_dir))
     found = {}
-    for line in yaml_path.read_text().splitlines():
-        pass
     for dirpath, _, names in os.walk(mount_dir):
         for n in names:
             if any(n in files for files in comfy_setup.REQUIRED_MODEL_FILES.values()):
@@ -97,8 +95,6 @@ def main():
     _check(res, "mount", lambda: mount(a.mount))
     _check(res, "secrets", secrets)
     if not res["secrets"].get("detail", {}).get("HF_TOKEN"):
-        res["secrets"]["ok"] = False
-    if not res["secrets"].get("detail", {}).get("GITHUB_TOKEN"):
         res["secrets"]["ok"] = False
     _check(res, "hub_commit", lambda: hub_commit(a.hub_dataset, a.run_id))
     _check(res, "versions_after", versions)
