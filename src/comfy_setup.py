@@ -27,21 +27,21 @@ COMFYUI_GGUF_REPO_URL = "https://github.com/city96/ComfyUI-GGUF.git"
 # built directly into ComfyUI core in comfy_extras/nodes_wan.py.
 # No third-party Wan node repo is needed.
 
-# 6 mirror files provided by Kaggle dataset u8888u/wan22-i2v-a14b
+# 6 mirror files provided by Kaggle dataset kagglekimg99k/wan14-model-cache
 REQUIRED_MODEL_FILES: Dict[str, List[str]] = {
     "diffusion_models": [
-        "Wan2.2-I2V-A14B-HighNoise-Q4_K_S.gguf",
-        "Wan2.2-I2V-A14B-LowNoise-Q4_K_S.gguf",
+        "Wan2.2-I2V-A14B-HighNoise-Q3_K_M.gguf",
+        "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
     ],
     "text_encoders": [
-        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "umt5-xxl-encoder-Q3_K_M.gguf",
     ],
     "vae": [
         "wan_2.1_vae.safetensors",
     ],
     "loras": [
-        "Wan2.2-I2V-A14B-4steps-lora-high_noise_model.safetensors",
-        "Wan2.2-I2V-A14B-4steps-lora-low_noise_model.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
     ],
 }
 
@@ -128,7 +128,7 @@ def write_extra_model_paths(root: Path, mount: Path) -> Path:
             if fname not in file_to_dir:
                 raise FileNotFoundError(
                     f"Required model file '{fname}' not found under mount path '{mount}'. "
-                    f"Ensure dataset mirror u8888u/wan22-i2v-a14b is mounted."
+                    f"Ensure dataset mirror kagglekimg99k/wan14-model-cache is mounted."
                 )
             category_dirs[category].add(str(file_to_dir[fname].resolve()))
     

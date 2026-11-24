@@ -232,13 +232,13 @@ def build_workflow_prompt(
         "{{sampler}}": str(item.get("sampler", "euler")),
         "{{scheduler}}": str(item.get("scheduler", "simple")),
         "{{prefix}}": f"wan14_{item.get('id', 'out')}",
-        "{{unet_high}}": "Wan2.2-I2V-A14B-HighNoise-Q4_K_S.gguf",
-        "{{unet_low}}": "Wan2.2-I2V-A14B-LowNoise-Q4_K_S.gguf",
-        "{{clip}}": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "{{unet_high}}": "Wan2.2-I2V-A14B-HighNoise-Q3_K_M.gguf",
+        "{{unet_low}}": "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
+        "{{clip}}": "umt5-xxl-encoder-Q3_K_M.gguf",
         "{{clip_type}}": "wan",
         "{{vae}}": "wan_2.1_vae.safetensors",
-        "{{lora_high}}": "Wan2.2-I2V-A14B-4steps-lora-high_noise_model.safetensors",
-        "{{lora_low}}": "Wan2.2-I2V-A14B-4steps-lora-low_noise_model.safetensors",
+        "{{lora_high}}": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "{{lora_low}}": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
         "{{lora_strength}}": "1.0",
     }
 

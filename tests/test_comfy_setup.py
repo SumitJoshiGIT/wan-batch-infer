@@ -111,7 +111,7 @@ def test_write_extra_model_paths_fails_loudly_on_missing_file():
         # Create mount with only some files (missing one)
         cat_dir = mount / "diffusion_models"
         cat_dir.mkdir(parents=True)
-        (cat_dir / "Wan2.2-I2V-A14B-HighNoise-Q4_K_S.gguf").write_text("dummy")
+        (cat_dir / "Wan2.2-I2V-A14B-HighNoise-Q3_K_M.gguf").write_text("dummy")
         # Missing LowNoise file
         
         try:
@@ -127,12 +127,12 @@ def test_required_model_files_complete():
     assert total_files == 6
     
     # Check specific expected files
-    assert "Wan2.2-I2V-A14B-HighNoise-Q4_K_S.gguf" in comfy_setup.REQUIRED_MODEL_FILES["diffusion_models"]
-    assert "Wan2.2-I2V-A14B-LowNoise-Q4_K_S.gguf" in comfy_setup.REQUIRED_MODEL_FILES["diffusion_models"]
-    assert "umt5_xxl_fp8_e4m3fn_scaled.safetensors" in comfy_setup.REQUIRED_MODEL_FILES["text_encoders"]
+    assert "Wan2.2-I2V-A14B-HighNoise-Q3_K_M.gguf" in comfy_setup.REQUIRED_MODEL_FILES["diffusion_models"]
+    assert "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf" in comfy_setup.REQUIRED_MODEL_FILES["diffusion_models"]
+    assert "umt5-xxl-encoder-Q3_K_M.gguf" in comfy_setup.REQUIRED_MODEL_FILES["text_encoders"]
     assert "wan_2.1_vae.safetensors" in comfy_setup.REQUIRED_MODEL_FILES["vae"]
-    assert "Wan2.2-I2V-A14B-4steps-lora-high_noise_model.safetensors" in comfy_setup.REQUIRED_MODEL_FILES["loras"]
-    assert "Wan2.2-I2V-A14B-4steps-lora-low_noise_model.safetensors" in comfy_setup.REQUIRED_MODEL_FILES["loras"]
+    assert "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors" in comfy_setup.REQUIRED_MODEL_FILES["loras"]
+    assert "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors" in comfy_setup.REQUIRED_MODEL_FILES["loras"]
 
 
 def test_pinned_commits_are_valid_sha():

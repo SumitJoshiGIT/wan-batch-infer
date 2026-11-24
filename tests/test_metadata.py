@@ -48,7 +48,7 @@ def test_kernel_metadata_values():
     assert data["is_private"] is True
     assert data["enable_gpu"] is True
     assert data["enable_internet"] is True
-    assert data["dataset_sources"] == ["u8888u/wan22-i2v-a14b"]
+    assert data["dataset_sources"] == ["kagglekimg99k/wan14-model-cache"]
     assert data["competition_sources"] == []
     assert data["kernel_sources"] == []
 

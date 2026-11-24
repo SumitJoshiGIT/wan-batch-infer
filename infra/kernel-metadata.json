@@ -7,7 +7,7 @@
   "is_private": true,
   "enable_gpu": true,
   "enable_internet": true,
-  "dataset_sources": ["u8888u/wan22-i2v-a14b"],
+  "dataset_sources": ["kagglekimg99k/wan14-model-cache"],
   "competition_sources": [],
   "kernel_sources": []
 }
