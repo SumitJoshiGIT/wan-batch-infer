@@ -138,6 +138,15 @@ def skipped_record(i: int, step: dict, dep: int) -> dict:
     return {"i": i, "tool": step["tool"], "rc": None, "skipped": True, "reason": f"dependency step {dep} failed"}
 
 
+def _exists_under(root: Path, value: str) -> bool:
+    """True when value names an existing file or dir under root. Prompts and other long or odd
+    strings are not paths: stat() errors (name too long, NUL byte) mean 'not a path'."""
+    try:
+        return (root / value).exists()
+    except (OSError, ValueError):
+        return False
+
+
 def resolve(value, root: Path, outs: list):
     if isinstance(value, str):
         def sub(m):
@@ -147,7 +156,7 @@ def resolve(value, root: Path, outs: list):
             return str(outs[k])
         value = OUT_REF.sub(sub, value)
         # Tools run with cwd <root>/tools, so a relative path to an existing file or dir under root must be made absolute.
-        if value and not os.path.isabs(value) and (root / value).exists():
+        if value and not os.path.isabs(value) and _exists_under(root, value):
             return str((root / value).resolve())
         return value
     if isinstance(value, list):

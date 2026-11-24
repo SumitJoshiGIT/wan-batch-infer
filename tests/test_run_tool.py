@@ -182,3 +182,8 @@ def test_link_models_root_refuses_foreign_dir(tmp_path):
     (tmp_path / "models").mkdir()
     with pytest.raises(RuntimeError):
         run_tool.link_models_root(tmp_path)
+
+
+def test_resolve_leaves_long_prompt_strings_alone(tmp_path):
+    prompt = "SCENE (identical in every frame): " + "a bare concrete warehouse, " * 40
+    assert run_tool.resolve({"prompt": prompt, "odd": "a\x00b"}, tmp_path, []) == {"prompt": prompt, "odd": "a\x00b"}
