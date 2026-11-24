@@ -56,6 +56,20 @@ def setup_comfy(root: Path, env: dict) -> Path:
     return comfy
 
 
+def link_models_root(root: Path) -> Path:
+    """hq tools look in <HQ>/models; models are stored under components/videos/models
+    (locally the latter is a symlink to the former). Mirror that on the bundle root."""
+    store = root / "components/videos/models"
+    store.mkdir(parents=True, exist_ok=True)
+    link = root / "models"
+    if link.is_symlink() or link.exists():
+        if link.resolve() == store.resolve():
+            return link
+        raise RuntimeError(f"{link} already exists and is not the model store")
+    link.symlink_to(store, target_is_directory=True)
+    return link
+
+
 def fetch_models(root: Path, env: dict, token) -> list:
     from huggingface_hub import hf_hub_download, snapshot_download
     models = root / "components/videos/models"
@@ -75,6 +89,7 @@ def fetch_models(root: Path, env: dict, token) -> list:
             snapshot_download(c["repo"], local_dir=str(d), token=token,
                               allow_patterns=c.get("allow_patterns"))
     shutil.rmtree(root / "_dl", ignore_errors=True)
+    link_models_root(root)
     return got
 
 

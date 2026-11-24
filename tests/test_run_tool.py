@@ -167,3 +167,18 @@ def test_main_skips_dependents_of_failed_step_and_runs_independent_ones(tmp_path
     assert done["steps"][2]["rc"] == 0 and "skipped" not in done["steps"][2]
     assert done["steps"][3] == {"i": 3, "tool": "demo.d", "rc": None, "skipped": True, "reason": "dependency step 1 failed"}
 
+
+
+def test_link_models_root_points_at_store(tmp_path):
+    link = run_tool.link_models_root(tmp_path)
+    (tmp_path / "components/videos/models/diffusion_models").mkdir(parents=True)
+    (tmp_path / "components/videos/models/diffusion_models/m.gguf").write_bytes(b"x")
+    assert (link / "diffusion_models/m.gguf").exists()
+    assert run_tool.link_models_root(tmp_path) == link  # idempotent
+
+
+def test_link_models_root_refuses_foreign_dir(tmp_path):
+    import pytest
+    (tmp_path / "models").mkdir()
+    with pytest.raises(RuntimeError):
+        run_tool.link_models_root(tmp_path)
