@@ -48,15 +48,14 @@ def test_filter_requirements_removes_torch_packages():
 def test_filter_requirements_handles_variants():
     """Test filter handles package name variants (underscores, dashes)."""
     lines = [
-        "torch_aaa==1.0\n",      # starts with torch
-        "torchvision_ext==1.0\n", # starts with torchvision
-        "nvidia_something==1.0\n", # starts with nvidia
+        "Torch==2.0\n",           # case-insensitive exact name
+        "torchvision[extra]>=1\n", # extras
+        "nvidia_something==1.0\n", # underscores normalised, nvidia- prefix
+        "torch_aaa==1.0\n",       # a different package that merely starts with torch: kept
     ]
-    
+
     filtered = comfy_setup.filter_requirements(lines)
-    filtered_text = "".join(filtered)
-    # All should be removed
-    assert filtered_text.strip() == ""
+    assert [l.strip() for l in filtered] == ["torch_aaa==1.0"]
 
 
 def test_build_constraints():
@@ -174,3 +173,10 @@ def test_requirements_cloud_has_no_torch_packages():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_filter_requirements_keeps_torchsde_drops_torch():
+    from comfy_setup import filter_requirements
+    lines = ["torch\n", "torchsde\n", "torchvision>=0.1\n", "torchaudio\n", "nvidia-cudnn-cu12\n", "torchaudio-foo\n", "numpy\n"]
+    kept = [l.strip() for l in filter_requirements(lines)]
+    assert kept == ["torchsde", "torchaudio-foo", "numpy"]

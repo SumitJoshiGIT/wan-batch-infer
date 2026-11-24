@@ -70,10 +70,8 @@ def filter_requirements(lines: List[str]) -> List[str]:
         match = re.match(r"^([a-zA-Z0-9_\-\.]+)", stripped)
         if match:
             pkg_name = match.group(1).lower().replace("_", "-")
-            if any(
-                pkg_name == forbidden or pkg_name.startswith(forbidden)
-                for forbidden in ("torch", "torchvision", "torchaudio", "nvidia-")
-            ):
+            # exact names only: a "torch" prefix would also drop torchsde, which ComfyUI needs
+            if pkg_name in ("torch", "torchvision", "torchaudio") or pkg_name.startswith("nvidia-"):
                 continue
         
         filtered.append(line)

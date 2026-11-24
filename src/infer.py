@@ -382,9 +382,11 @@ def run_inference(
 
         # Real path: setup ComfyUI if not already set up (only when no comfy_cmd provided)
         comfy_dir = work_dir / "ComfyUI"
-        if comfy_cmd is None and not (comfy_dir / "main.py").exists():
+        setup_marker = comfy_dir / ".setup_done"
+        if comfy_cmd is None and not setup_marker.exists():
             import comfy_setup
             comfy_setup.setup_comfyui(comfy_dir, mount)
+            setup_marker.write_text("ok")  # only after a complete setup, so a half-installed dir is redone
 
         # Use main.py directly (ComfyUI auto-reads extra_model_paths.yaml from its root)
         cmd = comfy_cmd or [
